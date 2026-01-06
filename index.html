@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>융플리 추천기</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; margin: 24px; line-height: 1.5; }
+    .wrap { max-width: 960px; margin: 0 auto; }
+    h1 { font-size: 24px; margin: 0 0 12px; }
+    p { margin: 8px 0 16px; color: #444; }
+    .card { border: 1px solid #e6e6e6; border-radius: 16px; padding: 16px; margin: 12px 0; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    select, input, button { font-size: 14px; padding: 10px 12px; border-radius: 12px; border: 1px solid #ddd; }
+    button { cursor: pointer; }
+    .pill { display:inline-block; padding: 4px 10px; border-radius: 999px; border: 1px solid #eee; font-size: 12px; color:#555; margin-right:6px; }
+    .song { padding: 10px 0; border-top: 1px dashed #eee; }
+    .song:first-child { border-top: 0; }
+    .meta { color:#666; font-size: 13px; }
+    a { color: inherit; }
+    .muted { color:#777; font-size: 13px; }
+    code { background:#f6f6f6; padding: 2px 6px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>융플리 추천기</h1>
+  <p class="muted">서버/로그인 없이(=내 리소스 거의 0) 동작하는 <b>정적 웹페이지</b>예요. 데이터는 이 폴더의 <code>yungple-songs.json</code>만 읽습니다.</p>
+
+  <div class="card">
+    <div class="row">
+      <label>
+        <div class="meta">원하는 분위기(키워드)</div>
+        <select id="mood">
+          <option value="">선택 안 함(전체에서 랜덤)</option>
+          <option value="새로운 시작">새로운 시작</option>
+          <option value="밤/새벽">밤/새벽</option>
+          <option value="산책">산책</option>
+          <option value="위로">위로</option>
+          <option value="집중">집중</option>
+          <option value="설렘">설렘</option>
+          <option value="여행">여행</option>
+          <option value="우주">우주</option>
+          <option value="계절">계절(봄/여름/가을/겨울)</option>
+          <option value="감정">감정(마음/눈물/기억 등)</option>
+        </select>
+      </label>
+
+      <label style="flex:1; min-width: 220px;">
+        <div class="meta">플레이리스트 제목에서 검색(자유 입력)</div>
+        <input id="q" placeholder="예: 겨울, 평행우주, 엔딩, 가을..." />
+      </label>
+
+      <label>
+        <div class="meta">몇 곡?</div>
+        <select id="k">
+          <option>3</option>
+          <option selected>5</option>
+          <option>7</option>
+          <option>10</option>
+        </select>
+      </label>
+
+      <button id="go">추천 받기</button>
+    </div>
+    <p class="muted" style="margin-top:12px;">
+      팁: 추천 결과의 <b>Spotify 검색</b>을 누르면 곡을 바로 찾을 수 있어요(API 필요 없음).
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="row" style="align-items:center; justify-content:space-between;">
+      <div>
+        <span class="pill" id="countPill">로딩 중…</span>
+        <span class="muted" id="filterInfo"></span>
+      </div>
+      <button id="copy">결과 링크 복사</button>
+    </div>
+    <div id="out" style="margin-top: 10px;"></div>
+  </div>
+
+  <p class="muted">© 융플리 · This page is static.</p>
+</div>
+
+<script>
+const MOOD_KEYWORDS = {
+  "새로운 시작": ["첫 페이지","시작","출발","새해","chapter","첫"],
+  "밤/새벽": ["밤","새벽","midnight","night","감정이 섞인 밤"],
+  "산책": ["산책","walk","길","어디로","거리","바람"],
+  "위로": ["위로","괜찮","선물","마음","안아","눈물","따뜻"],
+  "집중": ["study","focus","집중","작업","deep","flow"],
+  "설렘": ["설레","설렘","두근","엔딩","기다리"],
+  "여행": ["여행","road","trip","fly","지도","바다"],
+  "우주": ["우주","별","달","평행우주","cosmic","space"],
+  "계절": ["봄","여름","가을","겨울"],
+  "감정": ["감정","마음","기억","사랑","그리움","쓸쓸","외로"]
+};
+
+let SONGS = [];
+
+function spotifySearchUrl(track, artist) {
+  const q = encodeURIComponent((track + " " + artist).trim());
+  return `https://open.spotify.com/search/${q}`;
+}
+
+function sample(arr, k) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a.slice(0, Math.min(k, a.length));
+}
+
+function applyFilters() {
+  const mood = document.getElementById("mood").value;
+  const q = (document.getElementById("q").value || "").trim().toLowerCase();
+
+  let filtered = SONGS;
+
+  if (mood && MOOD_KEYWORDS[mood]) {
+    const keys = MOOD_KEYWORDS[mood].map(x => x.toLowerCase());
+    filtered = filtered.filter(s => {
+      const t = (s.playlist || "").toLowerCase();
+      return keys.some(k => t.includes(k));
+    });
+  }
+
+  if (q) {
+    filtered = filtered.filter(s => {
+      const hay = ((s.playlist||"") + " " + (s.track||"") + " " + (s.artist||"")).toLowerCase();
+      return hay.includes(q);
+    });
+  }
+
+  return { filtered, mood, q };
+}
+
+function render() {
+  const { filtered, mood, q } = applyFilters();
+  const k = parseInt(document.getElementById("k").value, 10) || 5;
+  const picked = sample(filtered, k);
+
+  document.getElementById("countPill").textContent = `전체 ${SONGS.length}곡 · 조건 후 ${filtered.length}곡`;
+  const info = [];
+  if (mood) info.push(`분위기: ${mood}`);
+  if (q) info.push(`검색: "${q}"`);
+  document.getElementById("filterInfo").textContent = info.length ? ("(" + info.join(" / ") + ")") : "";
+
+  const out = document.getElementById("out");
+  if (!picked.length) {
+    out.innerHTML = "<p class='muted'>조건에 맞는 곡이 없어요. 분위기를 바꾸거나 검색어를 지워봐요.</p>";
+    return;
+  }
+
+  out.innerHTML = picked.map(s => {
+    const link = spotifySearchUrl(s.track, s.artist);
+    const album = s.album ? ` · ${s.album}` : "";
+    return `
+      <div class="song">
+        <div><b>${s.track}</b> — ${s.artist || "Unknown"}</div>
+        <div class="meta">${s.playlist}${album}</div>
+        <div class="meta"><a href="${link}" target="_blank" rel="noreferrer">Spotify 검색</a></div>
+      </div>
+    `;
+  }).join("");
+}
+
+function setFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const mood = params.get("mood") || "";
+  const q = params.get("q") || "";
+  const k = params.get("k") || "5";
+  if (mood) document.getElementById("mood").value = mood;
+  if (q) document.getElementById("q").value = q;
+  if (k) document.getElementById("k").value = k;
+}
+
+function copyLink() {
+  const mood = document.getElementById("mood").value;
+  const q = document.getElementById("q").value || "";
+  const k = document.getElementById("k").value;
+  const params = new URLSearchParams();
+  if (mood) params.set("mood", mood);
+  if (q.trim()) params.set("q", q.trim());
+  if (k) params.set("k", k);
+  const url = location.origin + location.pathname + (params.toString() ? ("?" + params.toString()) : "");
+  navigator.clipboard.writeText(url);
+  alert("링크를 복사했어요!");
+}
+
+async function init() {
+  const res = await fetch("./yungple-songs.json");
+  SONGS = await res.json();
+  setFromUrl();
+  render();
+}
+
+document.getElementById("go").addEventListener("click", render);
+document.getElementById("copy").addEventListener("click", copyLink);
+document.getElementById("q").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") render();
+});
+window.addEventListener("load", init);
+</script>
+</body>
+</html>
